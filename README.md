@@ -48,11 +48,7 @@ This will handle everything for you. After that you can reboot you system.
 
 ### Post kernel update
 
-This is also an important part. I noticed that after the first time updating the kernel to the mainline the both cooling fan and Wi-Fi stopped working. Therefore, I have also written the `post_update.sh` script. You should run it once you are booted again into your system. A less important "fix" was to just keep the green led on, as the mainline kernel makes it blink as a heartbeat function. I let it just on instead.
-
-```
-sh post_update.sh
-```
+This is also an important part. I noticed that after the first time updating the kernel to the mainline the both cooling fan and Wi-Fi stopped working. Therefore, I have also written a post-update part on the script. A less important "fix" was to just keep the green led on, as the mainline kernel makes it blink as a heartbeat function. I let it just on instead.
 
 ## What's next
 
