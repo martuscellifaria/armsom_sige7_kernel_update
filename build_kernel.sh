@@ -3,6 +3,7 @@
 # This script fetches the master branch of the Linux kernel,
 # builds it targeting the ArmSoM Sige7 (Rockchip RK3588)
 # and install to your current partition.
+#!/bin/bash
 set -e
 
 KERNEL_DIR="$HOME/linux-mainline"
@@ -89,31 +90,64 @@ echo "Kernel $KERNEL_VERSION built and installed."
 
 echo "Applying post-install fixes..."
 
-sudo tee /etc/udev/rules.d/99-fan.rules << 'EOF'
-SUBSYSTEM=="hwmon", DEVPATH=="*/hwmon/hwmon*", ATTR{name}=="pwmfan", ATTR{pwm1_enable}="0"
+sudo tee /etc/systemd/system/pwm-fan.service << 'EOF'
+[Unit]
+Description=PWM Fan Control
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fan-pwm.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
-FAN_HWMON=$(grep -l "pwmfan" /sys/class/hwmon/hwmon*/name 2>/dev/null | head -1 | sed 's|/name||')
-THERMAL_ZONE="/sys/class/thermal/thermal_zone0/temp"
+sudo tee /usr/local/bin/fan-pwm.sh << 'SCRIPT'
+#!/bin/bash
+PWMCHIP="/sys/class/pwm/pwmchip0"
+PWM="${PWMCHIP}/pwm0"
+TEMP="/sys/class/thermal/thermal_zone0/temp"
+PERIOD=50000
+MINTEMP=40000
+MAXTEMP=65000
+MINPWM=80
+MAXPWM=255
 
-if [ -n "$FAN_HWMON" ]; then
-    sudo tee /etc/fancontrol << EOF
-INTERVAL=10
-FCTEMPS=${FAN_HWMON}/pwm1=${THERMAL_ZONE}
-FCFANS=${FAN_HWMON}/pwm1=
-MINTEMP=${FAN_HWMON}/pwm1=40000
-MAXTEMP=${FAN_HWMON}/pwm1=75000
-MINSTART=${FAN_HWMON}/pwm1=100
-MINSTOP=${FAN_HWMON}/pwm1=80
-MINPWM=${FAN_HWMON}/pwm1=80
-MAXPWM=${FAN_HWMON}/pwm1=255
-EOF
-    sudo systemctl enable --now fancontrol 2>/dev/null || true
-    echo "Fan control configured on $FAN_HWMON"
-else
-    echo "WARNING: pwmfan not found — skipping fancontrol setup"
+if [ ! -d "$PWM" ]; then
+    echo "pwm-fan" | sudo tee /sys/bus/platform/drivers/pwm-fan/unbind > /dev/null 2>&1
+    sleep 1
+    echo 0 | sudo tee ${PWMCHIP}/export > /dev/null 2>&1
+    echo $PERIOD | sudo tee ${PWM}/period > /dev/null
+    echo 1 | sudo tee ${PWM}/enable > /dev/null
 fi
 
+while true; do
+    TEMP_VAL=$(cat $TEMP)
+    
+    if [ $TEMP_VAL -le $MINTEMP ]; then
+        PWM_VAL=$MINPWM
+    elif [ $TEMP_VAL -ge $MAXTEMP ]; then
+        PWM_VAL=$MAXPWM
+    else
+        RANGE=$((MAXTEMP - MINTEMP))
+        OFFSET=$((TEMP_VAL - MINTEMP))
+        PWM_RANGE=$((MAXPWM - MINPWM))
+        PWM_VAL=$(( MINPWM + (OFFSET * PWM_RANGE) / RANGE ))
+    fi
+    
+    DUTY=$(( PWM_VAL * PERIOD / 255 ))
+    echo $DUTY | sudo tee ${PWM}/duty_cycle > /dev/null
+    sleep 5
+done
+SCRIPT
+
+sudo chmod +x /usr/local/bin/fan-pwm.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now pwm-fan 2>/dev/null || true
+echo "Fan control configured via raw PWM"
 
 sudo mkdir -p /usr/lib/firmware/brcm
 sudo ln -sf /usr/lib/firmware/ap6275p/fw_bcm43752a2_pcie_ag.bin /usr/lib/firmware/brcm/brcmfmac43752a2-pcie.bin
