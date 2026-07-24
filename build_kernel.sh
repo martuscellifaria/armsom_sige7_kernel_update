@@ -93,7 +93,7 @@ echo "Applying post-install fixes..."
 sudo tee /etc/systemd/system/pwm-fan.service << 'EOF'
 [Unit]
 Description=PWM Fan Control
-After=multi-user.target
+After=sysinit.target
 
 [Service]
 Type=simple
@@ -102,7 +102,7 @@ Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=basic.target
 EOF
 
 sudo tee /usr/local/bin/fan-pwm.sh << 'SCRIPT'
@@ -111,18 +111,28 @@ PWMCHIP="/sys/class/pwm/pwmchip0"
 PWM="${PWMCHIP}/pwm0"
 TEMP="/sys/class/thermal/thermal_zone0/temp"
 PERIOD=50000
-MINTEMP=40000
-MAXTEMP=65000
+MINTEMP=45000
+MAXTEMP=70000
 MINPWM=80
 MAXPWM=255
 
+for i in $(seq 1 10); do
+    if [ ! -d "$PWM" ]; then
+        echo "pwm-fan" | sudo tee /sys/bus/platform/drivers/pwm-fan/unbind > /dev/null 2>&1
+        sleep 1
+        echo 0 | sudo tee ${PWMCHIP}/export > /dev/null 2>&1
+    fi
+    [ -d "$PWM" ] && break
+    sleep 2
+done
+
 if [ ! -d "$PWM" ]; then
-    echo "pwm-fan" | sudo tee /sys/bus/platform/drivers/pwm-fan/unbind > /dev/null 2>&1
-    sleep 1
-    echo 0 | sudo tee ${PWMCHIP}/export > /dev/null 2>&1
-    echo $PERIOD | sudo tee ${PWM}/period > /dev/null
-    echo 1 | sudo tee ${PWM}/enable > /dev/null
+    echo "ERROR: Could not export PWM" >&2
+    exit 1
 fi
+
+echo $PERIOD | sudo tee ${PWM}/period > /dev/null
+echo 1 | sudo tee ${PWM}/enable > /dev/null
 
 while true; do
     TEMP_VAL=$(cat $TEMP)
